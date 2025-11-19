@@ -22,10 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-gazebo-ros2-control \
     ros-humble-gazebo-ros-pkgs \
     python3-colcon-common-extensions \
-    # helpful extras
     ros-humble-octomap-ros \
     libgoogle-glog-dev libgflags-dev \
     mesa-utils x11-apps \
+    ros-humble-rmw-cyclonedds-cpp \
+    unzip \
  && rm -rf /var/lib/apt/lists/*
 
 # Locale
