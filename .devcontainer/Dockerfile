@@ -64,4 +64,4 @@ RUN echo 'source /usr/share/bash-completion/bash_completion' >> ~/.bashrc && \
     echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc && \
     echo 'export COLCON_HOME=$HOME/.colcon' >> ~/.bashrc && \
     # Optional: run rosdep update when the container starts an interactive shell
-    echo 'command -v rosdep >/dev/null && rosdep update || true' >> ~/.bashrc
+    echo 'command -v rosdep >/dev/null || true' >> ~/.bashrc
