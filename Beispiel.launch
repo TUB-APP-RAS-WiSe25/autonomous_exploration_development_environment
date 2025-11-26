@@ -1,0 +1,55 @@
+<launch>
+  <!-- 1. Argumente definieren -->
+  <arg name="sensorFrame" default="lidar" /> 
+  <arg name="vehicleFrame" default="base_link" />
+  <arg name="scan_topic" default="/lidar/scan_filtered" />
+  <arg name="odom_topic" default="/odom" />
+  <arg name="cmd_vel_topic" default="/vehicle/vehicle_cmd_vel" />
+
+  <!-- 2. EIGENE ROBOTER HARDWARE STARTEN -->
+  <!-- Du musst sicherstellen, dass Mapping läuft, bevor du dieses File startest.
+       Alternativ kannst du es hier includen (auskommentieren falls schon manuell gestartet): -->
+  <!-- <include file="$(find bearcar_launch)/launch/mapping.launch.py" /> -->
+
+  <!-- 3. KONVERTIERUNG: LaserScan -> PointCloud2 -->
+  <!-- Das CMU Projekt braucht PointCloud2. Wir nutzen einen Standard ROS Node dafür. -->
+  <node pkg="pointcloud_to_laserscan" exec="laserscan_to_pointcloud_node" name="laserscan_to_pointcloud">
+    <remap from="scan_in" to="$(var scan_topic)"/>
+    <remap from="cloud" to="/registered_scan"/>
+    <param name="target_frame" value="$(var sensorFrame)"/>
+    <param name="transform_tolerance" value="0.01"/>
+    <param name="min_height" value="-1.0"/>
+    <param name="max_height" value="1.0"/>
+    <param name="angle_min" value="-3.14159"/> <!-- -180 deg -->
+    <param name="angle_max" value="3.14159"/>  <!-- 180 deg -->
+  </node>
+
+  <!-- 4. TERRAIN ANALYSIS (Bodenbeschaffenheit) -->
+  <include file="$(find terrain_analysis)/launch/terrain_analysis.launch">
+    <arg name="checkTerrainConn" value="true" />
+  </include>
+
+  <!-- 5. LOCAL PLANNER (Pfadplanung) -->
+  <include file="$(find local_planner)/launch/local_planner.launch">
+    <arg name="cameraOffsetZ" value="0.0" />
+    <arg name="goalX" value="0.0" />
+    <arg name="goalY" value="0.0" />
+    <!-- WICHTIG: Frames anpassen! -->
+    <arg name="sensorOffsetX" value="0.0" /> <!-- Lidar ist relativ mittig laut URDF (nur 7cm offset) -->
+    <arg name="sensorOffsetY" value="0.0" />
+  </include>
+
+  <!-- 6. VISUALISIERUNG (Rviz) -->
+  <include file="$(find vehicle_simulator)/launch/visualization.launch" />
+
+  <!-- 7. TOPIC BRIDGES (Verbindungen herstellen) -->
+  
+  <!-- Odometrie weiterleiten -->
+  <!-- CMU hört auf /state_estimation, Bearcar sendet auf /odom -->
+  <node pkg="topic_tools" exec="relay" name="odom_relay" args="$(var odom_topic) /state_estimation" />
+
+  <!-- Fahrbefehle weiterleiten -->
+  <!-- CMU sendet auf /cmd_vel, Bearcar hört auf /vehicle/vehicle_cmd_vel -->
+  <node pkg="topic_tools" exec="relay" name="cmd_relay" args="/cmd_vel $(var cmd_vel_topic)" />
+
+</launch>
