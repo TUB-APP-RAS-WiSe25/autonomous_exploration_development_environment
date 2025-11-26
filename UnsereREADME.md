@@ -46,3 +46,34 @@ ros2 launch real_robot_bringup start_robot.launch.py
 
 
 HINWEIS: es gibt in vehicle_simulator/launch auch eine system_real_robot.launch, die kann man auch in unseren real_robot_bringup ordner kopieren und mit ros2 launch real_robot_bringup system_real_robot.launch starten. Bisher funktionieren beide nicht.
+
+
+
+TODO:
+das war der beispiel befehl mit --privileged, braucht man um die sensor daten im docker zu bekommen
+docker run -it --rm \
+    --net=host \
+    --privileged \
+    --ipc=host \
+    -v /dev:/dev \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -e DISPLAY=$DISPLAY \
+    -v /home/jetson/workspace:/root/workspace \
+    bearcar_image \
+    bash
+
+
+Erklärung der Flags:
+    -v /home/jetson/workspace:/root/workspace: Das ist der Zaubertrick. Er spiegelt deinen Ordner vom Roboter in den Ordner /root/workspace im Container. Der Container ist jetzt nicht mehr leer.
+
+    --privileged & -v /dev:/dev: Gibt dem Container Zugriff auf Lidar, VESC und Kamera.
+
+    --net=host: Der Container nutzt die IP des Roboters (wichtig für ROS2).
+
+
+gucken dass das alles drin ist:
+apt-get install -y ros-humble-xacro ros-humble-joint-state-publisher \
+                   ros-humble-robot-state-publisher ros-humble-rviz2 \
+                   ros-humble-nav2-bringup ros-humble-slam-toolbox \
+                   ros-humble-pointcloud-to-laserscan ros-humble-topic-tools \
+                   ros-humble-diagnostic-updater libserial-dev
