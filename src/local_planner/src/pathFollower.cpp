@@ -149,24 +149,50 @@ void pathHandler(const nav_msgs::msg::Path::ConstSharedPtr pathIn)
 void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 {
   joyTime = nh->now().seconds(); 
-  joySpeedRaw = sqrt(joy->axes[3] * joy->axes[3] + joy->axes[4] * joy->axes[4]);
+
+  // --- Axis mapping for your controller ---
+  // axes[0] -> left stick X (left/right)  -> yaw
+  // axes[1] -> left stick Y (up/down)     -> forward/back
+  // axes[5] -> LT trigger (1.0 .. -1.0)   -> autonomy toggle
+
+  const double joy_x = joy->axes[0];        // left stick left/right
+  const double joy_y = joy->axes[1];        // left stick up/down
+
+  // Assume: pushing stick UP gives negative values -> flip sign so UP = +forward
+  const double forward = -joy_y;
+
+  // Compute speed from stick magnitude
+  joySpeedRaw = std::sqrt(joy_x * joy_x + forward * forward);
   joySpeed = joySpeedRaw;
   if (joySpeed > 1.0) joySpeed = 1.0;
-  if (joy->axes[4] == 0) joySpeed = 0;
-  joyYaw = joy->axes[3];
-  if (joySpeed == 0 && noRotAtStop) joyYaw = 0;
 
-  if (joy->axes[4] < 0 && !twoWayDrive) {
-    joySpeed = 0;
-    joyYaw = 0;
+  // If stick is nearly centered in Y, stop (deadband)
+  if (std::fabs(forward) < 0.05) {
+    joySpeed = 0.0;
   }
 
-  if (joy->axes[2] > -0.1) {
-    autonomyMode = false;
+  // Yaw from left stick X
+  joyYaw = joy_x;
+  if (joySpeed == 0.0 && noRotAtStop) {
+    joyYaw = 0.0;
+  }
+
+  // Block reverse if twoWayDrive is disabled
+  if (forward < 0.0 && !twoWayDrive) {
+    joySpeed = 0.0;
+    joyYaw = 0.0;
+  }
+
+  // Autonomy toggle via LT (axis 5):
+  //   rest:  ~1.0  -> manual (autonomyMode = false)
+  //   press: ~-1.0 -> autonomyMode = true
+  if (joy->axes[5] > -0.1) {
+    autonomyMode = false;   // manual
   } else {
-    autonomyMode = true;
+    autonomyMode = true;    // autonomy
   }
 }
+
 
 void speedHandler(const std_msgs::msg::Float32::ConstSharedPtr speed)
 {

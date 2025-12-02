@@ -41,6 +41,10 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
 # rosdep: initialize as root; update will be run by the user later
 RUN rosdep init || true
 
+# Make sure group "input" with the correct GID exists, and add vscode to it
+RUN groupadd -g 995 input || true && \
+    usermod -aG input vscode
+
 # Default to Cyclone DDS (robust choice in Humble)
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 

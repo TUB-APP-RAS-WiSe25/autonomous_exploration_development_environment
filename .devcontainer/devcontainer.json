@@ -1,7 +1,11 @@
 {
   "name": "ROS2 Humble Devcontainer",
   "build": { "dockerfile": "Dockerfile" },
-  "runArgs": ["--net=host"],
+  "runArgs": [ 
+    "--net=host", 
+    "--device=/dev/input/by-id/usb-SHANWAN_Android_Gamepad-joystick", 
+    "--device=/dev/input/by-id/usb-SHANWAN_Android_Gamepad-event-joystick" 
+  ],
   "containerEnv": {
     "DISPLAY": "${localEnv:DISPLAY}",
     "QT_X11_NO_MITSHM": "1",
@@ -9,6 +13,7 @@
     "LIBGL_ALWAYS_SOFTWARE": "1"
   },
   "mounts": [
+    "source=/dev/input,target=/dev/input,type=bind",
     "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
     "source=${localEnv:XAUTHORITY},target=/home/vscode/.Xauthority,type=bind"
   ],
