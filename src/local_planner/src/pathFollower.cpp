@@ -308,16 +308,22 @@ int main(int argc, char** argv)
       if (dirDiff > PI) dirDiff -= 2 * PI;
       else if (dirDiff < -PI) dirDiff += 2 * PI;
 
+      
       if (twoWayDrive) {
         double time = nh->now().seconds();
-        if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
+        /*if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
           navFwd = false;
           switchTime = time;
         } else if (fabs(dirDiff) < PI / 2 && !navFwd && time - switchTime > switchTimeThre) {
           navFwd = true;
           switchTime = time;
-        }
+        }*/
+        
+        navFwd = true;
+        switchTime = time;
       }
+
+      
 
       float joySpeed2 = maxSpeed * joySpeed;
       if (!navFwd) {

@@ -423,6 +423,7 @@ int main(int argc, char** argv)
       
       actualSteeringAngle = atan(vehicleYawRate * wheelbase / effectiveSpeed);
       actualSteeringAngle = std::clamp(actualSteeringAngle, -maxSteeringAngle, maxSteeringAngle);
+      
       actualYawRate = (effectiveSpeed / wheelbase) * tan(actualSteeringAngle);
     }
 
