@@ -107,6 +107,14 @@ def generate_launch_description():
     output='screen'
   )
 
+  start_twist_to_ackermann = Node(
+    package='vehicle_simulator',
+    executable='twist_to_ackermann_node',
+    name='twist_to_ackermann',
+    output='screen'
+  )
+
+
   delayed_start_rviz = TimerAction(
     period=8.0,
     actions=[
@@ -129,6 +137,7 @@ def generate_launch_description():
   ld.add_action(declare_checkTerrainConn)
 
   ld.add_action(start_local_planner)
+  ld.add_action(start_twist_to_ackermann)
   ld.add_action(start_terrain_analysis)
   ld.add_action(start_terrain_analysis_ext)
   ld.add_action(start_vehicle_simulator)

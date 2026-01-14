@@ -42,11 +42,32 @@ find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 
 add_executable(vehicleSimulator src/vehicleSimulator.cpp)
-ament_target_dependencies(vehicleSimulator rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions gazebo_ros gazebo_msgs)
+add_executable(twist_to_ackermann_node src/twist_to_ackermann.cpp)
+
+ament_target_dependencies(vehicleSimulator 
+  rclcpp 
+  std_msgs 
+  sensor_msgs 
+  nav_msgs 
+  geometry_msgs 
+  tf2 
+  tf2_ros 
+  tf2_geometry_msgs 
+  message_filters 
+  pcl_ros 
+  pcl_conversions 
+  gazebo_ros 
+  gazebo_msgs
+)
+ament_target_dependencies(twist_to_ackermann_node
+  rclcpp
+  geometry_msgs
+)
 target_link_libraries(vehicleSimulator ${OpenCV_LIBRARIES} ${PCL_LIBRARIES})
 
 install(TARGETS
   vehicleSimulator
+  twist_to_ackermann_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(

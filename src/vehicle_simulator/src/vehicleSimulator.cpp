@@ -86,13 +86,6 @@ float vehiclePitch = 0;
 float vehicleYaw = 0;
 
 float vehicleYawRate = 0;
-
-//
-float steeringAngle = 0;      // Current steering angle (radians)
-float wheelbase = 0.3;        // Distance between front and rear axles (meters)
-float maxSteeringAngle = 30 * PI/180; // ~35 degrees in radians
-///
-
 float vehicleSpeed = 0;
 
 float terrainZ = 0;
@@ -364,7 +357,7 @@ int main(int argc, char** argv)
 
   auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map", 2, terrainCloudHandler);
 
-  auto subSpeed = nh->create_subscription<geometry_msgs::msg::TwistStamped>("/cmd_vel", 5, speedHandler);
+  auto subSpeed = nh->create_subscription<geometry_msgs::msg::TwistStamped>("/ackermann_cmd", 5, speedHandler);
 
   auto pubVehicleOdom = nh->create_publisher<nav_msgs::msg::Odometry>("/state_estimation", 5);
   nav_msgs::msg::Odometry odomData;
@@ -404,49 +397,17 @@ int main(int argc, char** argv)
     vehicleRoll = terrainRoll * cos(vehicleYaw) + terrainPitch * sin(vehicleYaw);
     vehiclePitch = -terrainRoll * sin(vehicleYaw) + terrainPitch * cos(vehicleYaw);
     
-    // Apply Ackermann constraints
-    float actualYawRate = vehicleYawRate;
-    float actualSteeringAngle = 0;
-    float effectiveSpeed = vehicleSpeed; 
-
-    if (fabs(vehicleYawRate) > 0.01) {
-      // Scale speed based on how much turning is needed
-      float desiredSteeringAngle = atan(vehicleYawRate * wheelbase / std::max(fabs(vehicleSpeed), 0.01f));
-      float steeringDemand = std::min(fabs(desiredSteeringAngle) / maxSteeringAngle, 1.0f);
-      
-      // More aggressive speed for sharper turns
-      float minTurnSpeed = 0.15 + steeringDemand * 0.35;  // 0.15-0.5 m/s based on steering
-      
-      if (fabs(effectiveSpeed) < minTurnSpeed) {
-        effectiveSpeed = (vehicleSpeed >= 0) ? minTurnSpeed : -minTurnSpeed;
-      }
-      
-      actualSteeringAngle = atan(vehicleYawRate * wheelbase / effectiveSpeed);
-      actualSteeringAngle = std::clamp(actualSteeringAngle, -maxSteeringAngle, maxSteeringAngle);
-      
-      actualYawRate = (effectiveSpeed / wheelbase) * tan(actualSteeringAngle);
-    }
-
-    // Printing Speed, yawRate and steeringAngle
-    RCLCPP_INFO_THROTTLE(nh->get_logger(), *nh->get_clock(), 500,
-      "Speed: %.2f->%.2f | YawRate: %.2f->%.2f | Steering: %.1f°", 
-      vehicleSpeed, effectiveSpeed, 
-      vehicleYawRate, actualYawRate,
-      actualSteeringAngle * 180.0 / PI);
-
-    
-    vehicleYaw += 0.005 * actualYawRate;
+    vehicleYaw += 0.005 * vehicleYawRate;
 
     if (vehicleYaw > PI)
       vehicleYaw -= 2 * PI;
     else if (vehicleYaw < -PI)
       vehicleYaw += 2 * PI;
 
-    // Use effectiveSpeed instead of vehicleSpeed for motion
-    vehicleX += 0.005 * cos(vehicleYaw) * effectiveSpeed +
-                0.005 * actualYawRate * (-sin(vehicleYaw) * sensorOffsetX - cos(vehicleYaw) * sensorOffsetY);
-    vehicleY += 0.005 * sin(vehicleYaw) * effectiveSpeed +
-                0.005 * actualYawRate * (cos(vehicleYaw) * sensorOffsetX - sin(vehicleYaw) * sensorOffsetY);
+    vehicleX += 0.005 * cos(vehicleYaw) * vehicleSpeed +
+                0.005 * vehicleYawRate * (-sin(vehicleYaw) * sensorOffsetX - cos(vehicleYaw) * sensorOffsetY);
+    vehicleY += 0.005 * sin(vehicleYaw) * vehicleSpeed +
+                0.005 * vehicleYawRate * (cos(vehicleYaw) * sensorOffsetX - sin(vehicleYaw) * sensorOffsetY);
     vehicleZ = terrainZ + vehicleHeight;
 
     odomTime = nh->now();
