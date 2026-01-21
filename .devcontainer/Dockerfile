@@ -27,7 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-utils x11-apps \
     ros-humble-rmw-cyclonedds-cpp \
     unzip \
- && rm -rf /var/lib/apt/lists/*
+    python3-pip
+    
+RUN pip3 install pysdl2
+
+RUN rm -rf /var/lib/apt/lists/*
 
 # Locale
 RUN locale-gen en_US.UTF-8
