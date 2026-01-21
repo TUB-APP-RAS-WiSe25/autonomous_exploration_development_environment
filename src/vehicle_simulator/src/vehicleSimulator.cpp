@@ -357,7 +357,7 @@ int main(int argc, char** argv)
 
   auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map", 2, terrainCloudHandler);
 
-  auto subSpeed = nh->create_subscription<geometry_msgs::msg::TwistStamped>("/cmd_vel", 5, speedHandler);
+  auto subSpeed = nh->create_subscription<geometry_msgs::msg::TwistStamped>("/ackermann_cmd", 5, speedHandler);
 
   auto pubVehicleOdom = nh->create_publisher<nav_msgs::msg::Odometry>("/state_estimation", 5);
   nav_msgs::msg::Odometry odomData;
@@ -396,7 +396,9 @@ int main(int argc, char** argv)
 
     vehicleRoll = terrainRoll * cos(vehicleYaw) + terrainPitch * sin(vehicleYaw);
     vehiclePitch = -terrainRoll * sin(vehicleYaw) + terrainPitch * cos(vehicleYaw);
+    
     vehicleYaw += 0.005 * vehicleYawRate;
+
     if (vehicleYaw > PI)
       vehicleYaw -= 2 * PI;
     else if (vehicleYaw < -PI)
