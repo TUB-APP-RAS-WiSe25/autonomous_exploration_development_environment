@@ -34,6 +34,8 @@
 #include "rmw/types.h"
 #include "rmw/qos_profiles.h"
 
+#include "SDLControllerManager.h"
+
 using namespace std;
 
 const double PI = 3.1415926;
@@ -99,6 +101,19 @@ bool pathInit = false;
 bool navFwd = true;
 double switchTime = 0;
 
+// SDL Game Controller Manager for automatic controller detection
+SDLControllerManager* sdlControllerManager = nullptr;
+
+// Publisher for joystick mode autonomous goal
+rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr pubJoyGoal = nullptr;
+
+// Joystick mode parameters
+double joyGoalDistance = 5.0;  // Distance in front to set goal for joystick mode
+double lastGoalPublishTime = 0.0;  // Throttle goal publishing to once per second
+double lastPublishedGoalDirection = 0.0;  // Track last published direction
+const double goalPublishInterval = 1.0;  // Only publish goals once per second
+const double directionChangeThreshold = 5.0;  // Only publish if direction changes > 5 degrees
+
 nav_msgs::msg::Path path;
 rclcpp::Node::SharedPtr nh;
 
@@ -148,48 +163,109 @@ void pathHandler(const nav_msgs::msg::Path::ConstSharedPtr pathIn)
 
 void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 {
-  joyTime = nh->now().seconds(); 
+  joyTime = nh->now().seconds();
 
-  // --- Axis mapping for your controller ---
-  // axes[0] -> left stick X (left/right)  -> yaw
-  // axes[1] -> left stick Y (up/down)     -> forward/back
-  // axes[5] -> LT trigger (1.0 .. -1.0)   -> autonomy toggle
+  // Try to get input from SDL controller first if available
+  if (sdlControllerManager && sdlControllerManager->getConnectedControllerCount() > 0) {
+    sdlControllerManager->update();
+    
+    auto input = sdlControllerManager->getControllerInput(0);
 
-  const double joy_x = joy->axes[0];        // left stick left/right
-  const double joy_y = joy->axes[1];        // left stick up/down
+    // Map SDL controller input to motion commands
+    // Left stick: forward/back and left/right
+    double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
+    double strafe = input.leftStickX;
 
-  // Assume: pushing stick UP gives negative values -> flip sign so UP = +forward
-  const double forward = -joy_y;
+    // Compute speed from stick magnitude
+    joySpeedRaw = std::sqrt(forward * forward + strafe * strafe);
+    joySpeed = joySpeedRaw;
+    if (joySpeed > 1.0) joySpeed = 1.0;
 
-  // Compute speed from stick magnitude
-  joySpeedRaw = std::sqrt(joy_x * joy_x + forward * forward);
-  joySpeed = joySpeedRaw;
-  if (joySpeed > 1.0) joySpeed = 1.0;
+    // Apply deadband to total speed magnitude
+    if (joySpeed < 0.05) {
+      joySpeed = 0.0;
+      joyYaw = 0.0;
+    } else {
+      // Yaw from left stick X (strafe)
+      joyYaw = strafe;
+      if (joySpeed == 0.0 && noRotAtStop) {
+        joyYaw = 0.0;
+      }
+    }
 
-  // If stick is nearly centered in Y, stop (deadband)
-  if (std::fabs(forward) < 0.05) {
-    joySpeed = 0.0;
-  }
+    // Block reverse if twoWayDrive is disabled
+    if (forward < 0.0 && !twoWayDrive) {
+      joySpeed = 0.0;
+      joyYaw = 0.0;
+    }
 
-  // Yaw from left stick X
-  joyYaw = joy_x;
-  if (joySpeed == 0.0 && noRotAtStop) {
-    joyYaw = 0.0;
-  }
+    // Check for autonomy toggle (e.g., LT trigger or button)
+    // Using left trigger (LT) - when pressed it's > 0
+    if (input.leftTrigger > 0.5) {
+      autonomyMode = true;
+    } else if (input.rightTrigger < 0.5) {
+      autonomyMode = false;
+    }
 
-  // Block reverse if twoWayDrive is disabled
-  if (forward < 0.0 && !twoWayDrive) {
-    joySpeed = 0.0;
-    joyYaw = 0.0;
-  }
+    // Debug output
+    RCLCPP_INFO_THROTTLE(
+      nh->get_logger(), 
+      *nh->get_clock(), 
+      1000,  // Print every 1000ms
+      "[SDL Controller] Speed: %.2f, Yaw: %.2f, Autonomy: %s",
+      joySpeed, joyYaw, autonomyMode ? "ON" : "OFF"
+    );
 
-  // Autonomy toggle via LT (axis 5):
-  //   rest:  ~1.0  -> manual (autonomyMode = false)
-  //   press: ~-1.0 -> autonomyMode = true
-  if (joy->axes[5] > -0.1) {
-    autonomyMode = false;   // manual
   } else {
-    autonomyMode = true;    // autonomy
+    // Fallback to ROS joy message if SDL controller not available
+    // --- Axis mapping for your controller ---
+    // axes[0] -> left stick X (left/right)  -> yaw
+    // axes[1] -> left stick Y (up/down)     -> forward/back
+    // axes[5] -> LT trigger (1.0 .. -1.0)   -> autonomy toggle
+
+    const double joy_x = joy->axes[0];        // left stick left/right
+    const double joy_y = joy->axes[1];        // left stick up/down
+
+    // Assume: pushing stick UP gives negative values -> flip sign so UP = +forward
+    const double forward = -joy_y;
+
+    // Compute speed from stick magnitude
+    joySpeedRaw = std::sqrt(joy_x * joy_x + forward * forward);
+    joySpeed = joySpeedRaw;
+    if (joySpeed > 1.0) joySpeed = 1.0;
+
+    // Apply deadband to total speed magnitude
+    if (joySpeed < 0.05) {
+      joySpeed = 0.0;
+      joyYaw = 0.0;
+    } else {
+      // Yaw from left stick X
+      joyYaw = joy_x;
+      if (joySpeed == 0.0 && noRotAtStop) {
+        joyYaw = 0.0;
+      }
+    }
+
+    // Block reverse if twoWayDrive is disabled
+    if (forward < 0.0 && !twoWayDrive) {
+      joySpeed = 0.0;
+      joyYaw = 0.0;
+    }
+
+    // Autonomy toggle via LT (axis 5):
+    //   rest:  ~1.0  -> manual (autonomyMode = false)
+    //   press: ~-1.0 -> autonomyMode = true
+    if (joy->axes[5] > -0.1) {
+      autonomyMode = false;   // manual
+    } else {
+      autonomyMode = true;    // autonomy
+    }
+
+    RCLCPP_DEBUG(
+      nh->get_logger(),
+      "[ROS Joy] Speed: %.2f, Yaw: %.2f, Autonomy: %s",
+      joySpeed, joyYaw, autonomyMode ? "ON" : "OFF"
+    );
   }
 }
 
@@ -273,6 +349,12 @@ int main(int argc, char** argv)
   nh->get_parameter("autonomySpeed", autonomySpeed);
   nh->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
 
+  // Initialize SDL2 Game Controller Manager
+  sdlControllerManager = new SDLControllerManager();
+  if (!sdlControllerManager->init()) {
+    RCLCPP_WARN(nh->get_logger(), "SDL2 controller initialization failed, falling back to ROS joy messages");
+  }
+
   auto subOdom = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odomHandler);
 
   auto subPath = nh->create_subscription<nav_msgs::msg::Path>("/path", 5, pathHandler);
@@ -284,6 +366,9 @@ int main(int argc, char** argv)
   auto subStop = nh->create_subscription<std_msgs::msg::Int8>("/stop", 5, stopHandler);
 
   auto pubSpeed = nh->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel", 5);
+
+  // Publisher for joystick mode autonomous goal (optional in pathFollower)
+  pubJoyGoal = nh->create_publisher<geometry_msgs::msg::PointStamped>("/way_point", 5);
 
   geometry_msgs::msg::TwistStamped cmd_vel;
   cmd_vel.header.frame_id = "vehicle";
@@ -336,13 +421,16 @@ int main(int argc, char** argv)
 
       if (twoWayDrive) {
         double time = nh->now().seconds();
-        if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
-          navFwd = false;
-          switchTime = time;
-        } else if (fabs(dirDiff) < PI / 2 && !navFwd && time - switchTime > switchTimeThre) {
-          navFwd = true;
-          switchTime = time;
-        }
+        // if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
+        //   navFwd = false;
+        //   switchTime = time;
+        // } else if (fabs(dirDiff) < PI / 2 && !navFwd && time - switchTime > switchTimeThre) {
+        //   navFwd = true;
+        //   switchTime = time;
+        // }
+
+        navFwd = false;
+        switchTime = time;
       }
 
       float joySpeed2 = maxSpeed * joySpeed;
@@ -404,6 +492,13 @@ int main(int argc, char** argv)
 
     status = rclcpp::ok();
     rate.sleep();
+  }
+
+  // Cleanup SDL2 Game Controller Manager
+  if (sdlControllerManager) {
+    sdlControllerManager->shutdown();
+    delete sdlControllerManager;
+    sdlControllerManager = nullptr;
   }
 
   return 0;

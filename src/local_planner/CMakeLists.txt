@@ -27,11 +27,23 @@ find_package(tf2 REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
+find_package(SDL2 REQUIRED)
 
-add_executable(localPlanner src/localPlanner.cpp)
-add_executable(pathFollower src/pathFollower.cpp)
-ament_target_dependencies(localPlanner rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
-ament_target_dependencies(pathFollower rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
+add_executable(localPlanner src/localPlanner.cpp src/SDLControllerManager.cpp)
+add_executable(pathFollower src/pathFollower.cpp src/SDLControllerManager.cpp)
+ament_target_dependencies(localPlanner rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions SDL2)
+ament_target_dependencies(pathFollower rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions SDL2)
+
+target_link_libraries(localPlanner ${SDL2_LIBRARIES})
+target_link_libraries(pathFollower ${SDL2_LIBRARIES})
+
+target_include_directories(localPlanner PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
+
+target_include_directories(pathFollower PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 
 install(TARGETS
   localPlanner

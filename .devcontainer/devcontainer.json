@@ -3,8 +3,8 @@
   "build": { "dockerfile": "Dockerfile" },
   "runArgs": [ 
     "--net=host", 
-    "--device=/dev/input/by-id/usb-SHANWAN_Android_Gamepad-joystick", 
-    "--device=/dev/input/by-id/usb-SHANWAN_Android_Gamepad-event-joystick" 
+    "--device=/dev/input/by-id/usb-Microsoft_Inc._Controller_0000000-joystick", 
+    "--device=/dev/input/by-id/usb-Microsoft_Inc._Controller_0000000-event-joystick" 
   ],
   "containerEnv": {
     "DISPLAY": "${localEnv:DISPLAY}",
