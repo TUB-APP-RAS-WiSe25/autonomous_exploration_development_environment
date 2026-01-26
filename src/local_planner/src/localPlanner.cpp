@@ -144,7 +144,7 @@ SDLControllerManager* sdlControllerManager = nullptr;
 rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr pubJoyGoal = nullptr;
 
 // Joystick mode parameters
-double joyGoalDistance = 5.0;  // Distance in front to set goal for joystick mode
+double joyGoalDistance = 100.0;  // Distance in front to set goal for joystick mode
 double lastGoalPublishTime = 0.0;  // Throttle goal publishing to once per second
 double lastPublishedGoalDirection = 0.0;  // Track last published direction
 const double goalPublishInterval = 1.0;  // Only publish goals once per second
@@ -259,7 +259,7 @@ void terrainCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr ter
 //   }
 // }
 
-void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
+void joystickHandler()  // SDL controller input handled directly via sdlControllerManager
 {
   joyTime = nh->now().seconds();
 
@@ -275,8 +275,8 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
     double strafe = input.leftStickX;
 
     // Compute speed from stick magnitude
-    joySpeedRaw = std::sqrt(forward * forward + strafe * strafe);
-    joySpeed = joySpeedRaw;
+    joySpeed = std::sqrt(forward * forward + strafe * strafe);
+
     if (joySpeed > 1.0) joySpeed = 1.0;
 
     // Apply deadband to total speed magnitude
@@ -290,137 +290,147 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 
     // Block reverse if twoWayDrive is disabled
     if (forward < 0.0 && !twoWayDrive) {
+      RCLCPP_DEBUG(nh->get_logger(),"TwoWayDrive Off");
       joySpeed = 0.0;
       joyDir = 0.0;
     }
+    RCLCPP_DEBUG(nh->get_logger(),"TwoWayDrive On");
 
     // Check for autonomy toggle (e.g., LT trigger or button)
     // Using left trigger (LT) - when pressed it's > 0
     if (input.leftTrigger > 0.5) {
+       RCLCPP_DEBUG(nh->get_logger(),"autonomy mode On");
       autonomyMode = true;
     } else if (input.rightTrigger < 0.5) {
+      RCLCPP_DEBUG(nh->get_logger(),"autonomy mode Off");
       autonomyMode = false;
     }
-
+    
     // Publish autonomous goal based on joystick direction (throttled to once per second)
-    double timeSinceLastGoal = joyTime - lastGoalPublishTime;
-    double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
-    
-    // Handle wraparound at 180/-180 degrees
-    if (directionDiff > 180.0) {
-      directionDiff = 360.0 - directionDiff;
+    if (joySpeed > 0.05 && pubJoyGoal) {
+      double timeSinceLastGoal = joyTime - lastGoalPublishTime;
+      double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
+      
+      // Handle wraparound at 180/-180 degrees
+      if (directionDiff > 180.0) {
+        directionDiff = 360.0 - directionDiff;
+      }
+      
+      if (timeSinceLastGoal >= goalPublishInterval || directionDiff >= directionChangeThreshold) {
+        geometry_msgs::msg::PointStamped joyGoalMsg;
+        joyGoalMsg.header.frame_id = "world";
+        joyGoalMsg.header.stamp = nh->now();
+        
+        // Convert joyDir (degrees) to radians relative to vehicle's current heading
+        double dirRad = joyDir * PI / 180.0;
+        double vehicleYawRad = vehicleYaw;
+        double absoluteAngle = vehicleYawRad + dirRad;
+        
+        // Set goal at distance in the direction the stick is pointing
+        joyGoalMsg.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
+        joyGoalMsg.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
+        joyGoalMsg.point.z = vehicleZ;
+        
+        // Update global goalX and goalY for use in main loop
+        goalX = joyGoalMsg.point.x;
+        goalY = joyGoalMsg.point.y;
+        
+        pubJoyGoal->publish(joyGoalMsg);
+        lastGoalPublishTime = joyTime;
+        lastPublishedGoalDirection = joyDir;
+        
+        RCLCPP_INFO_THROTTLE(nh->get_logger(), *nh->get_clock(), 500,
+          "[SDL] Publishing autonomous goal at (%.2f, %.2f) dir=%.1f°",
+          joyGoalMsg.point.x, joyGoalMsg.point.y, joyDir);
+      }
     }
-    
-    if (joySpeed > 0.05 && pubJoyGoal && 
-        (timeSinceLastGoal >= goalPublishInterval || directionDiff >= directionChangeThreshold)) {
-      
-      geometry_msgs::msg::PointStamped joyGoalMsg;
-      joyGoalMsg.header.frame_id = "world";
-      joyGoalMsg.header.stamp = nh->now();
-      
-      // Convert joyDir (degrees) to radians relative to vehicle's current heading
-      double dirRad = joyDir * PI / 180.0;
-      double vehicleYawRad = vehicleYaw;
-      double absoluteAngle = vehicleYawRad + dirRad;
-      
-      // Set goal at distance in the direction the stick is pointing
-      joyGoalMsg.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
-      joyGoalMsg.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
-      joyGoalMsg.point.z = vehicleZ;
-      
-      pubJoyGoal->publish(joyGoalMsg);
-      lastGoalPublishTime = joyTime;
-      lastPublishedGoalDirection = joyDir;
-      
-      RCLCPP_INFO_THROTTLE(nh->get_logger(), *nh->get_clock(), 500,
-        "[SDL] Publishing goal at (%.2f, %.2f) dir=%.1f°",
-        joyGoalMsg.point.x, joyGoalMsg.point.y, joyDir);
-    }
-
-  } else {
-    // Fallback to ROS joy message if SDL controller not available
-    // --- Axis mapping for your controller ---
-    // axes[0] -> left stick X (left/right)  -> direction
-    // axes[1] -> left stick Y (up/down)     -> forward/back
-    // axes[5] -> LT trigger (1.0 .. -1.0)   -> autonomy toggle
-
-    const double joy_x = joy->axes[0];        // left stick left/right
-    const double joy_y = joy->axes[1];        // left stick up/down
-
-    // Assume: pushing stick UP gives negative values -> flip sign so UP = +forward
-    const double forward = -joy_y;
-
-    // Compute speed from stick magnitude
-    joySpeedRaw = std::sqrt(joy_x * joy_x + forward * forward);
-    joySpeed = joySpeedRaw;
-    if (joySpeed > 1.0) joySpeed = 1.0;
-
-    // Apply deadband to total speed magnitude
-    if (joySpeed < 0.05) {
-      joySpeed = 0.0;
-      joyDir = 0.0;
-    } else {
-      // Direction from left stick
-      joyDir = std::atan2(joy_x, forward) * 180.0 / PI;
-    }
-
-    // Block reverse if twoWayDrive is disabled
-    if (forward < 0.0 && !twoWayDrive) {
-      joySpeed = 0.0;
-      joyDir = 0.0;
-    }
-
-    // Autonomy toggle via LT (axis 5):
-    //   rest:  ~1.0  -> manual (autonomyMode = false)
-    //   press: ~-1.0 -> autonomyMode = true
-    if (joy->axes[5] > -0.1) {
-      autonomyMode = false;   // manual
-    } else {
-      autonomyMode = true;    // autonomy
-    }
-
-    // Publish autonomous goal based on joystick direction (throttled to once per second)
-    double timeSinceLastGoal = joyTime - lastGoalPublishTime;
-    double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
-    
-    // Handle wraparound at 180/-180 degrees
-    if (directionDiff > 180.0) {
-      directionDiff = 360.0 - directionDiff;
-    }
-    
-    if (joySpeed > 0.05 && pubJoyGoal && 
-        (timeSinceLastGoal >= goalPublishInterval || directionDiff >= directionChangeThreshold)) {
-      
-      geometry_msgs::msg::PointStamped joyGoalMsg;
-      joyGoalMsg.header.frame_id = "world";
-      joyGoalMsg.header.stamp = nh->now();
-      
-      // Convert joyDir (degrees) to radians relative to vehicle's current heading
-      double dirRad = joyDir * PI / 180.0;
-      double vehicleYawRad = vehicleYaw;
-      double absoluteAngle = vehicleYawRad + dirRad;
-      
-      // Set goal at distance in the direction the stick is pointing
-      joyGoalMsg.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
-      joyGoalMsg.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
-      joyGoalMsg.point.z = vehicleZ;
-      
-      pubJoyGoal->publish(joyGoalMsg);
-      lastGoalPublishTime = joyTime;
-      lastPublishedGoalDirection = joyDir;
-      
-      RCLCPP_INFO_THROTTLE(nh->get_logger(), *nh->get_clock(), 500,
-        "[ROS] Publishing goal at (%.2f, %.2f) dir=%.1f°",
-        joyGoalMsg.point.x, joyGoalMsg.point.y, joyDir);
-    }
-
-    RCLCPP_DEBUG(
-      nh->get_logger(),
-      "[ROS Joy] Speed: %.2f, Dir: %.1f°, Autonomy: %s",
-      joySpeed, joyDir, autonomyMode ? "ON" : "OFF"
-    );
+      autonomyMode = true;
   }
-}
+} 
+  // else {
+  //   // Fallback to ROS joy message if SDL controller not available
+  //   // --- Axis mapping for your controller ---
+  //   // axes[0] -> left stick X (left/right)  -> direction
+  //   // axes[1] -> left stick Y (up/down)     -> forward/back
+  //   // axes[5] -> LT trigger (1.0 .. -1.0)   -> autonomy toggle
+
+  //   const double joy_x = joy->axes[0];        // left stick left/right
+  //   const double joy_y = joy->axes[1];        // left stick up/down
+
+  //   // Assume: pushing stick UP gives negative values -> flip sign so UP = +forward
+  //   const double forward = -joy_y;
+
+  //   // Compute speed from stick magnitude
+  //   joySpeedRaw = std::sqrt(joy_x * joy_x + forward * forward);
+  //   joySpeed = joySpeedRaw;
+  //   if (joySpeed > 1.0) joySpeed = 1.0;
+
+  //   // Apply deadband to total speed magnitude
+  //   if (joySpeed < 0.05) {
+  //     joySpeed = 0.0;
+  //     joyDir = 0.0;
+  //   } else {
+  //     // Direction from left stick
+  //     joyDir = std::atan2(joy_x, forward) * 180.0 / PI;
+  //   }
+
+  //   // Block reverse if twoWayDrive is disabled
+  //   if (forward < 0.0 && !twoWayDrive) {
+  //     joySpeed = 0.0;
+  //     joyDir = 0.0;
+  //   }
+
+  //   // Autonomy toggle via LT (axis 5):
+  //   //   rest:  ~1.0  -> manual (autonomyMode = false)
+  //   //   press: ~-1.0 -> autonomyMode = true
+  //   if (joy->axes[5] > -0.1) {
+  //     autonomyMode = false;   // manual
+  //   } else {
+  //     autonomyMode = true;    // autonomy
+  //   }
+
+  //   // Publish autonomous goal based on joystick direction (throttled to once per second)
+  //   double timeSinceLastGoal = joyTime - lastGoalPublishTime;
+  //   double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
+    
+  //   // Handle wraparound at 180/-180 degrees
+  //   if (directionDiff > 180.0) {
+  //     directionDiff = 360.0 - directionDiff;
+  //   }
+    
+  //   if (joySpeed > 0.05 && pubJoyGoal && 
+  //       (timeSinceLastGoal >= goalPublishInterval || directionDiff >= directionChangeThreshold)) {
+      
+  //     geometry_msgs::msg::PointStamped joyGoalMsg;
+  //     joyGoalMsg.header.frame_id = "world";
+  //     joyGoalMsg.header.stamp = nh->now();
+      
+  //     // Convert joyDir (degrees) to radians relative to vehicle's current heading
+  //     double dirRad = joyDir * PI / 180.0;
+  //     double vehicleYawRad = vehicleYaw;
+  //     double absoluteAngle = vehicleYawRad + dirRad;
+      
+  //     // Set goal at distance in the direction the stick is pointing
+  //     joyGoalMsg.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
+  //     joyGoalMsg.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
+  //     joyGoalMsg.point.z = vehicleZ;
+      
+  //     pubJoyGoal->publish(joyGoalMsg);
+  //     lastGoalPublishTime = joyTime;
+  //     lastPublishedGoalDirection = joyDir;
+      
+  //     RCLCPP_INFO_THROTTLE(nh->get_logger(), *nh->get_clock(), 500,
+  //       "[ROS] Publishing goal at (%.2f, %.2f) dir=%.1f°",
+  //       joyGoalMsg.point.x, joyGoalMsg.point.y, joyDir);
+  //   }
+
+  //   RCLCPP_DEBUG(
+  //     nh->get_logger(),
+  //     "[ROS Joy] Speed: %.2f, Dir: %.1f°, Autonomy: %s",
+  //     joySpeed, joyDir, autonomyMode ? "ON" : "OFF"
+  //   );
+  // }
+//}
 
 
 void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
@@ -776,7 +786,7 @@ int main(int argc, char** argv)
 
   auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map", 5, terrainCloudHandler);
 
-  auto subJoystick = nh->create_subscription<sensor_msgs::msg::Joy>("/joy", 5, joystickHandler);
+  // Joystick input is now handled directly via SDL controller manager in the main loop
 
   auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped> ("/way_point", 5, goalHandler);
 
@@ -919,9 +929,15 @@ int main(int argc, char** argv)
       if (pathRange < minPathRange) pathRange = minPathRange;
       float relativeGoalDis = adjacentRange;
 
-      if (autonomyMode) {
+      //if (autonomyMode) {
+      if (true) {//TODO: make car follow waypoint set by joystick direction and not by manual waypoint in simulation
+      //   goalX = joyGoalMsg.point.x;
+      // |                 ^~~~~~~~~~ */
+      //   goalY = joyGoalMsg.point.y;
         float relativeGoalX = ((goalX - vehicleX) * cosVehicleYaw + (goalY - vehicleY) * sinVehicleYaw);
         float relativeGoalY = (-(goalX - vehicleX) * sinVehicleYaw + (goalY - vehicleY) * cosVehicleYaw);
+        
+        //float relativeGoalX = ( - vehicleX);
 
         relativeGoalDis = sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
         joyDir = atan2(relativeGoalY, relativeGoalX) * 180 / PI;
