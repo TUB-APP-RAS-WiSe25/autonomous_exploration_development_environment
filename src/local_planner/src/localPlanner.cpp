@@ -271,8 +271,10 @@ void joystickHandler()  // SDL controller input handled directly via sdlControll
 
     // Map SDL controller input to motion commands
     // Left stick: forward/back and left/right
+    // double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
+    // double strafe = input.leftStickX;
     double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
-    double strafe = input.leftStickX;
+    double strafe = -input.leftStickX;
 
     // Compute speed from stick magnitude
     joySpeed = std::sqrt(forward * forward + strafe * strafe);
@@ -306,8 +308,9 @@ void joystickHandler()  // SDL controller input handled directly via sdlControll
       autonomyMode = false;
     }
     
-    // Publish autonomous goal based on joystick direction (throttled to once per second)
-    if (joySpeed > 0.05 && pubJoyGoal) {
+    // Publish autonomous goal based on joystick direction in autonomy mode (throttled to once per second)
+    // Note: In manual mode, pathFollower publishes goals instead. This ensures consistent behavior.
+    if (autonomyMode && joySpeed > 0.05 && pubJoyGoal) {
       double timeSinceLastGoal = joyTime - lastGoalPublishTime;
       double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
       
@@ -321,7 +324,7 @@ void joystickHandler()  // SDL controller input handled directly via sdlControll
         joyGoalMsg.header.frame_id = "world";
         joyGoalMsg.header.stamp = nh->now();
         
-        // Convert joyDir (degrees) to radians relative to vehicle's current heading
+        // Convert joyDir (degrees) to radians and compute absolute angle in world frame
         double dirRad = joyDir * PI / 180.0;
         double vehicleYawRad = vehicleYaw;
         double absoluteAngle = vehicleYawRad + dirRad;
@@ -344,7 +347,6 @@ void joystickHandler()  // SDL controller input handled directly via sdlControll
           joyGoalMsg.point.x, joyGoalMsg.point.y, joyDir);
       }
     }
-      autonomyMode = true;
   }
 } 
   // else {

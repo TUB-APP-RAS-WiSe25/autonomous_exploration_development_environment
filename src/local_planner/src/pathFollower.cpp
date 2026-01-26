@@ -175,8 +175,11 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 
     // Map SDL controller input to motion commands
     // Left stick: forward/back and left/right
+    // double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
+    // double strafe = input.leftStickX;
     double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
-    double strafe = input.leftStickX;
+    double strafe = -input.leftStickX;
+
 
     // Compute speed from stick magnitude
     joySpeedRaw = std::sqrt(forward * forward + strafe * strafe);
@@ -292,18 +295,15 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
     double currentTime = joyTime;
     double timeSinceLastGoal = currentTime - lastGoalPublishTime;
     
-    // Compute direction from forward and strafe components (in vehicle frame)
-    // Then transform to world frame by adding vehicle yaw
-    double joyDir = atan2(joyStrafe, joyForward) + vehicleYaw;
+    // Compute direction from forward and strafe components (in vehicle frame) - in RADIANS
+    double joyDirRad = std::atan2(joyStrafe, joyForward);
+    double joyDirDeg = joyDirRad * 180.0 / PI;  // For comparison tracking
     
-    // Normalize angle to [-PI, PI]
-    while (joyDir > PI) joyDir -= 2 * PI;
-    while (joyDir < -PI) joyDir += 2 * PI;
-    
-    double directionDiff = std::abs(joyDir - lastPublishedGoalDirection);
+    // Convert to degrees for direction difference calculation
+    double directionDiff = std::abs(joyDirDeg - lastPublishedGoalDirection);
     // Handle wraparound at 180/-180 degrees
-    if (directionDiff > PI) {
-      directionDiff = 2 * PI - directionDiff;
+    if (directionDiff > 180.0) {
+      directionDiff = 360.0 - directionDiff;
     }
     
     // Publish goal if enough time has passed or direction has changed significantly
@@ -312,14 +312,17 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
       goalPoint.header.stamp = nh->now();
       goalPoint.header.frame_id = "map";
       
-      // Set goal point at joyGoalDistance in the direction of joystick input
-      goalPoint.point.x = vehicleX + joyGoalDistance * cos(joyDir);
-      goalPoint.point.y = vehicleY + joyGoalDistance * sin(joyDir);
+      // Transform from vehicle frame to world frame using vehicle yaw
+      double absoluteAngle = vehicleYaw + joyDirRad;
+      
+      // Set goal point at joyGoalDistance in the direction of joystick input (in world frame)
+      goalPoint.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
+      goalPoint.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
       goalPoint.point.z = vehicleZ;
       
       pubJoyGoal->publish(goalPoint);
       lastGoalPublishTime = currentTime;
-      lastPublishedGoalDirection = joyDir;
+      lastPublishedGoalDirection = joyDirDeg;  // Store degree value for next comparison
     }
   }
 }
