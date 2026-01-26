@@ -479,19 +479,19 @@ int main(int argc, char** argv)
 
       if (twoWayDrive) {
         double time = nh->now().seconds();
-        // if (fabs(dirDiff) > PI / 2 && navFwd && time - switchTime > switchTimeThre) {
-        //   navFwd = false;
-        //   switchTime = time;
-        // } else if (fabs(dirDiff) < PI / 2 && !navFwd && time - switchTime > switchTimeThre) {
-        //   navFwd = true;
-        //   switchTime = time;
-        // }
-
-        navFwd = false;
-        switchTime = time;
+        // Switch between forward and backward based on path direction relative to vehicle heading
+        // Use 135 degrees (3*PI/4) as threshold - vehicle prefers forward driving until goal is well behind
+        if (fabs(dirDiff) > 3 * PI / 4 && navFwd && time - switchTime > switchTimeThre) {
+          navFwd = false;
+          switchTime = time;
+        } else if (fabs(dirDiff) < 3 * PI / 4 && !navFwd && time - switchTime > switchTimeThre) {
+          navFwd = true;
+          switchTime = time;
+        }
       }
 
       float joySpeed2 = maxSpeed * joySpeed;
+      // If driving backward, negate speed and adjust direction by 180 degrees
       if (!navFwd) {
         dirDiff += PI;
         if (dirDiff > PI) dirDiff -= 2 * PI;
