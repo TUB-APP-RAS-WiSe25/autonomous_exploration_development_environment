@@ -115,8 +115,12 @@ double lastGoalPublishTime = 0.0;  // Throttle goal publishing to once per secon
 double lastPublishedGoalDirection = 0.0;  // Track last published direction
 const double goalPublishInterval = 1;  // Only publish goals once per second
 const double directionChangeThreshold = 5.0;  // Only publish if direction changes > 5 degrees
+double lastPublishedAbsoluteAngle = 0.0;   // radians, world frame
+bool haveLastPublishedAbsoluteAngle = false;
+bool joyStickActive = false;
 
 nav_msgs::msg::Path path;
+
 rclcpp::Node::SharedPtr nh;
 
 void odomHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odomIn)
@@ -168,97 +172,90 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joyIn)
 {
   joyTime = nh->now().seconds();
 
-  // Try to get input from SDL controller first if available
   if (sdlControllerManager && sdlControllerManager->getConnectedControllerCount() > 0) {
     sdlControllerManager->update();
-
     auto input = sdlControllerManager->getControllerInput(0);
 
-    // Map SDL controller input to motion commands
-    // Left stick: forward/back and left/right
-    // double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
-    // double strafe = input.leftStickX;
-    double forward = -input.leftStickY;  // Flip Y because up is typically negative in SDL
-    double strafe = -input.leftStickX;
+    // Map left stick: forward/back and left/right (vehicle frame)
+    double forward = -input.leftStickY;
+    double strafe  = -input.leftStickX;
+    const double deadband = 0.05;
 
+    double speedRaw = std::sqrt(forward*forward + strafe*strafe);
 
-    // Compute speed from stick magnitude
-    joySpeedRaw = std::sqrt(forward * forward + strafe * strafe);
-    joySpeed = joySpeedRaw;
-    if (joySpeed > 1.0) joySpeed = 1.0;
+    // Update stick-active flag and only overwrite joystick-state when stick is moved
+    if (speedRaw >= deadband) {
+      joyStickActive = true;
+      safetyStop = 0; // clear safety stop if joystick moved
 
-    // Store forward and strafe components for waypoint direction calculation
-    joyForward = forward;
-    joyStrafe = strafe;
+      joySpeedRaw = speedRaw;
+      joySpeed = joySpeedRaw;
+      if (joySpeed > 1.0) joySpeed = 1.0;
 
-    // Apply deadband to total speed magnitude
-    if (joySpeed < 0.05) {
-      joySpeed = 0.0;
-      joyYaw = 0.0;
-      joyForward = 0.0;
-      joyStrafe = 0.0;
-    } else {
-      // Yaw from left stick X (strafe)
+      joyForward = forward;
+      joyStrafe  = strafe;
+
       joyYaw = strafe;
-      if (joySpeed == 0.0 && noRotAtStop) {
+      if (joySpeed == 0.0 && noRotAtStop) joyYaw = 0.0;
+
+      // Block reverse if twoWayDrive is disabled
+      if (forward < 0.0 && !twoWayDrive) {
+        RCLCPP_DEBUG(nh->get_logger(),"TwoWayDrive Off");
+        joySpeed = 0.0;
         joyYaw = 0.0;
+      }
+    } else {
+      // stick neutral: mark not active but DO NOT zero joyForward/joyStrafe/joySpeedRaw
+      joyStickActive = false;
+      if(joySpeed > 0.2){ //if not already stopped, move at max speed 
+        //(when letting go of joystick the last speed value is very low)
+        joySpeed = 1;
       }
     }
 
-    // Block reverse if twoWayDrive is disabled>
-
-    if (forward < 0.0 && !twoWayDrive) {
-       RCLCPP_DEBUG(nh->get_logger(),"TwoWayDrive Off");
-      joySpeed = 0.0;
-      joyYaw = 0.0;
-    }
-
-    // Check for autonomy toggle (e.g., LT trigger or button)
-    // Using left trigger (LT) - when pressed it's > 0
+    // Autonomy toggle
     if (input.leftTrigger > 0.5) {
-      RCLCPP_DEBUG(nh->get_logger(),"Autonomy mode On");
       autonomyMode = true;
     } else if (input.rightTrigger < 0.5) {
-        RCLCPP_DEBUG(nh->get_logger(),"Autonomy mode Off");
       autonomyMode = false;
     }
 
-  
+    // B button: press-to-stop. Do not zero stored direction.
+    if (input.buttons[SDL_CONTROLLER_BUTTON_B]) {
+      if (safetyStop != 2) {
+        RCLCPP_INFO(nh->get_logger(),"B button pressed - Emergency Stop (hold)");
+      }
+      safetyStop = 2;
+    }
   }
-  
-  // When in manual joystick mode, publish a goal waypoint in the direction user is pointing
-  // so that the local planner generates obstacle-avoiding paths
+
+  // Publishing a waypoint on direction-change (keeps previous behavior),
+  // but store the absolute angle when we publish so neutral-stick publishing
+  // uses the same world-frame direction.
   if (!autonomyMode && pubJoyGoal && (joySpeedRaw > 0.05)) {
     double currentTime = joyTime;
-    
-    // Compute direction from forward and strafe components (in vehicle frame) - in RADIANS
     double joyDirRad = std::atan2(joyStrafe, joyForward);
-    double joyDirDeg = joyDirRad * 180.0 / PI;  // For comparison tracking
-    
-    // Convert to degrees for direction difference calculation
+    double joyDirDeg = joyDirRad * 180.0 / PI;
     double directionDiff = std::abs(joyDirDeg - lastPublishedGoalDirection);
-    // Handle wraparound at 180/-180 degrees
-    if (directionDiff > 180.0) {
-      directionDiff = 360.0 - directionDiff;
-    }
-    
-    // Publish goal if enough time has passed or direction has changed significantly
+    if (directionDiff > 180.0) directionDiff = 360.0 - directionDiff;
+
     if (directionDiff >= directionChangeThreshold) {
       geometry_msgs::msg::PointStamped goalPoint;
       goalPoint.header.stamp = nh->now();
       goalPoint.header.frame_id = "map";
-      
-      // Transform from vehicle frame to world frame using vehicle yaw
+
+      // compute absolute angle and store it
       double absoluteAngle = vehicleYaw + joyDirRad;
-      
-      // Set goal point at joyGoalDistance in the direction of joystick input (in world frame)
+      lastPublishedAbsoluteAngle = absoluteAngle;
+      haveLastPublishedAbsoluteAngle = true;
+
       goalPoint.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
       goalPoint.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
       goalPoint.point.z = vehicleZ;
-      
+
       pubJoyGoal->publish(goalPoint);
       lastGoalPublishTime = currentTime;
-      lastPublishedGoalDirection = joyDirDeg;  // Store degree value for next comparison
+      lastPublishedGoalDirection = joyDirDeg;
     }
   }
 }
@@ -266,44 +263,48 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joyIn)
 //function to publish joy goal periodically by timer (basically the last part of joystickHandler)
 void publishJoyGoalIfNeeded()
 {
-  // When in manual joystick mode, publish a goal waypoint in the direction user is pointing
-  // so that the local planner generates obstacle-avoiding paths
-  if (!autonomyMode && pubJoyGoal && (joySpeedRaw > 0.05)) {
+  if (!autonomyMode && pubJoyGoal && (joySpeedRaw > 0.05 || haveLastPublishedAbsoluteAngle)) {
     double currentTime = nh->now().seconds();
     double timeSinceLastGoal = currentTime - lastGoalPublishTime;
-    
-    // Compute direction from forward and strafe components (in vehicle frame) - in RADIANS
+
+    // Direction in vehicle frame from stored components (still valid even if stick = neutral)
     double joyDirRad = std::atan2(joyStrafe, joyForward);
-    double joyDirDeg = joyDirRad * 180.0 / PI;  // For comparison tracking
-    
-    // Convert to degrees for direction difference calculation
+    double joyDirDeg = joyDirRad * 180.0 / PI;
     double directionDiff = std::abs(joyDirDeg - lastPublishedGoalDirection);
-    // Handle wraparound at 180/-180 degrees
-    if (directionDiff > 180.0) {
-      directionDiff = 360.0 - directionDiff;
+    if (directionDiff > 180.0) directionDiff = 360.0 - directionDiff;
+
+    // Choose absolute angle to use:
+    double absoluteAngle;
+    if (joyStickActive) {
+      // stick is active: recompute absolute and update stored absolute
+      absoluteAngle = vehicleYaw + joyDirRad;
+      lastPublishedAbsoluteAngle = absoluteAngle;
+      haveLastPublishedAbsoluteAngle = true;
+    } else if (haveLastPublishedAbsoluteAngle) {
+      // stick neutral: use last stored absolute angle so waypoint stays in same world direction
+      absoluteAngle = lastPublishedAbsoluteAngle;
+    } else {
+      // fallback: compute from current vehicle yaw + joyDirRad
+      absoluteAngle = vehicleYaw + joyDirRad;
+      lastPublishedAbsoluteAngle = absoluteAngle;
+      haveLastPublishedAbsoluteAngle = true;
     }
 
-    //RCLCPP_DEBUG(nh->get_logger(), "time since last goal: %f, direction diff: %f", timeSinceLastGoal, directionDiff);
-    
-    // Publish goal if enough time has passed or direction has changed significantly
     if (timeSinceLastGoal >= goalPublishInterval) {
       geometry_msgs::msg::PointStamped goalPoint;
       goalPoint.header.stamp = nh->now();
       goalPoint.header.frame_id = "map";
-      
-      // Transform from vehicle frame to world frame using vehicle yaw
-      double absoluteAngle = vehicleYaw + joyDirRad;
-      
-      // Set goal point at joyGoalDistance in the direction of joystick input (in world frame)
+
       goalPoint.point.x = vehicleX + joyGoalDistance * std::cos(absoluteAngle);
       goalPoint.point.y = vehicleY + joyGoalDistance * std::sin(absoluteAngle);
       goalPoint.point.z = vehicleZ;
-      
+
       pubJoyGoal->publish(goalPoint);
       lastGoalPublishTime = currentTime;
-      lastPublishedGoalDirection = joyDirDeg;  // Store degree value for next comparison
-      
-      //RCLCPP_INFO(nh->get_logger(), "Published joy goal at: (%.2f, %.2f)", goalPoint.point.x, goalPoint.point.y);
+
+      // compute and store published direction (for future direction-diff checks)
+      lastPublishedGoalDirection = (std::atan2(std::sin(absoluteAngle - vehicleYaw), std::cos(absoluteAngle - vehicleYaw)) * 180.0 / PI);
+      haveLastPublishedAbsoluteAngle = true;
     }
   }
 }
