@@ -207,7 +207,7 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joyIn)
     } else {
       // stick neutral: mark not active but DO NOT zero joyForward/joyStrafe/joySpeedRaw
       joyStickActive = false;
-      if(joySpeed > 0.2){ //if not already stopped, move at max speed 
+      if(joySpeed > 0){ //if not already stopped, move at max speed 
         //(when letting go of joystick the last speed value is very low)
         joySpeed = 1;
       }
