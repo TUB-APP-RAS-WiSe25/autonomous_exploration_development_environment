@@ -62,7 +62,7 @@ double slowTime2 = 2.0;
 bool useInclToStop = false;
 double inclThre = 45.0;
 double stopTime = 5.0;
-bool noRotAtStop = false;
+bool noRotAtStop = true;
 bool noRotAtGoal = true;
 bool autonomyMode = false;
 double autonomySpeed = 1.0;
@@ -154,7 +154,7 @@ void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
   if (joySpeed > 1.0) joySpeed = 1.0;
   if (joy->axes[4] == 0) joySpeed = 0;
   joyYaw = joy->axes[3];
-  if (joySpeed == 0 && noRotAtStop) joyYaw = 0;
+  if (joySpeed == 0) joyYaw = 0;
 
   if (joy->axes[4] < 0 && !twoWayDrive) {
     joySpeed = 0;
@@ -340,7 +340,7 @@ int main(int argc, char** argv)
 
       if (joySpeed2 == 0 && !autonomyMode) {
         vehicleYawRate = maxYawRate * joyYaw * PI / 180.0;
-      } else if (pathSize <= 1 || (dis < stopDisThre && noRotAtGoal)) {
+      } else if (pathSize <= 1 || (dis < stopDisThre)) {
         vehicleYawRate = 0;
       }
 

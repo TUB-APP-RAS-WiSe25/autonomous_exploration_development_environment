@@ -23,8 +23,8 @@ xlabel('X (m)');
 ylabel('Y (m)');
 
 %% Ackermann vehicle limits
-wheelbase = 2.6;             % [m] TODO: measure
-deltaMax = 30 * pi/180;      % [rad] maximum steering angle TODO: measure
+wheelbase = 0.3;             % [m] 
+deltaMax = 30 * pi/180;      % [rad] maximum steering angle 
 kappaMax = tan(deltaMax) / wheelbase;   % maximum curvature
 
 theta0 = 0;                   % vehicle initial heading along +X ?
